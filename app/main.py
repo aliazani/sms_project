@@ -2,9 +2,20 @@ from flask import Flask, jsonify, request
 from pandas import read_excel
 import requests
 import sqlite3
+import re
 import kave_negar
 
 app = Flask(__name__)
+
+
+@app.route('v1/ok')
+def health_check():
+    """
+    This function is for saying every thing is fine.
+    :return:The message that said every thing is fine
+    """
+    return_message = {'message': 'ok'}
+    return jsonify(return_message)
 
 
 @app.route('/')
@@ -24,9 +35,12 @@ def import_database_from_excel(file_path):
     :param file_path: The path of excel file is in kave_negar.DATA_BASE_FILE_PATH
     :return: Two integers (number of serial rows, number of invalid rows)
     """
+    # Create Database and connect to it.
     conn = sqlite3.connect(kave_negar.DATA_BASE_FILE_PATH)
     cur = conn.cursor()
+
     # valid serials
+    # Create serials table
     cur.execute('DROP TABLE IF EXISTS serials')
 
     cur.execute('''
@@ -39,32 +53,35 @@ def import_database_from_excel(file_path):
     date DATE);''')
     conn.commit()
 
+    # Insert Data into serials table
     serials_counter = 0
     data_frame = read_excel(file_path, 0)
 
     for index, (row, reference_number, description, start_serial, end_serial, date) in data_frame.iterrows():
-        if serials_counter % 10:
+        start_serial = normalize_string(start_serial)
+        end_serial = normalize_string(end_serial)
+        if serials_counter % 10 == 0:
             query = f'INSERT INTO serials VALUES ' \
                     f'("{row}", "{reference_number}", "{description}", "{start_serial}", "{end_serial}", "{date}");'
             cur.execute(query)
             conn.commit()
         serials_counter += 1
     conn.commit()
+
     # Failure serials
     data_frame = read_excel(file_path, 1)  # This contains fail serial numbers.
+    # Create invalid table
     invalid_counter = 0
-
     cur.execute('DROP TABLE IF EXISTS invalids')
 
     cur.execute('''
     CREATE TABLE  IF EXISTS invalids (
         invalid_serial TEXT PRIMARY KEY);''')
     conn.commit()
-
-    for index, failed_serial in data_frame.iterrows():
-        fail_serial_row = failed_serial[0]
-        if invalid_counter % 10:
-            query = f'INSERT INTO invalids VALUES ("{fail_serial_row}");'
+    # Insert Data into invalids table
+    for index, (failed_serial,) in data_frame.iterrows():
+        if invalid_counter % 10 == 0:
+            query = f'INSERT INTO invalids VALUES ("{failed_serial}");'
             cur.execute(query)
             conn.commit()
         invalid_counter += 1
@@ -79,10 +96,27 @@ def send_sms(receptor, message):
     :param message:The message you want to send
     :return:
     """
+
     url = f'https://api.kavenegar.com/v1/{kave_negar.API_KEY}/sms/send.json'
     data = {'receptor': receptor,
             'message': message}
+
     response = requests.post(url, data)
+
+
+def normalize_string(string):
+    """
+    This function will change all the letters to the upper and convert persian digits to english digits.
+    :param string: The string that is also the serial number
+    :return: converted serial number
+    """
+    from_character = '۱۲۳۴۵۶۷۸۹۰'
+    to_character = '1234567890'
+    for i in range(len(from_character)):
+        string = string.replace(from_character[i], to_character[i])
+    string = string.upper()
+    string = re.sub(r'\W', '', string)  # for fix sql injection
+    return string
 
 
 @app.route('/v1/process', methods=['POST'])
@@ -94,13 +128,31 @@ def process():
     """
     data = request.form
     sender = data['from']
-    message = data['message']
-    send_sms(sender, 'Hi' + message)
+    message = normalize_string(data['message'])
+    answer = check_serial(message)
+    send_sms(sender, answer)
     return jsonify(data), 200
 
 
-def check_serial():
-    pass
+def check_serial(serial):
+    """
+    This function will get one serial number and return appropriate answer to that, after consulting the database.
+    :param serial: The serial number we want to check the validity.
+    :return:
+    """
+    # Connect to database
+    conn = sqlite3.connect(kave_negar.DATA_BASE_FILE_PATH)
+    cur = conn.cursor()
+    query = f"SELECT * FROM invalids WHERE invalid_serial == '{serial}'"
+    results = cur.execute(query)
+    if (results.fetchall()) == 1:
+        return 'This is not original product.'
+    query = f"SELECT * FROM serials WHERE start_serial start_serial <'{serial}' AND end_serial < '{serial}'"
+    results = cur.execute(query)
+    if (results.fetchall()) == 1:
+        return 'I found your serial'
+
+    return 'It was not in the db'
 
 
 if __name__ == '__main__':
