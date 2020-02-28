@@ -138,7 +138,7 @@ def check_serial(serial):
     """
     This function will get one serial number and return appropriate answer to that, after consulting the database.
     :param serial: The serial number we want to check the validity.
-    :return:
+    :return:The text that say us if the serial is valid or not.
     """
     # Connect to database
     conn = sqlite3.connect(kave_negar.DATA_BASE_FILE_PATH)
