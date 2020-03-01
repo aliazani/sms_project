@@ -1,12 +1,28 @@
-from flask import Flask, jsonify, request, Response, redirect, url_for, session, abort
+from flask import Flask, jsonify, flash, request, Response, redirect, url_for, session, abort
 from flask_login import LoginManager, UserMixin, login_required, login_user, logout_user
+from werkzeug.utils import secure_filename
 from pandas import read_excel
 import requests
 import sqlite3
 import re
+import os
 import kave_negar
 
 app = Flask(__name__)
+
+# Upload file
+upload_folder = kave_negar.UPLOAD_FOLDER
+allowed_extension = kave_negar.ALLOWED_EXTENSION
+app.config['UPLOAD_FOLDER'] = upload_folder
+
+
+def allowed_file(filename):
+    """ checks the extension of the passed filename to be in the allowed extensions
+        :param filename: full file name with extension
+        :return : extension of file
+    """
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed_extension
+
 
 # config
 app.config.update(SECRET_KEY=kave_negar.SECRET_KEY)
@@ -30,10 +46,30 @@ user = User(0)
 
 
 # some protected url
-@app.route('/')
+@app.route('/', methods=['GET', 'POST'])
 @login_required
 def home():
-    return Response('Hello world')
+    """ creates database if method is post otherwise shows the homepage with some stats
+    see import_database_from_excel() for more details on database creation"""
+    if request.method == 'POST':
+        # check if the post request has the file part
+        if 'file' not in request.files:
+            flash('No file part', 'danger')
+            return redirect(request.url)
+        file = request.files['file']
+        # if user does not select file, browser also
+        # submit an empty part without filename
+        if file.filename == '':
+            flash('No selected file', 'danger')
+            return redirect(request.url)
+        if file and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(file_path)
+            rows, failures = import_database_from_excel(file_path)
+            flash(f'Imported {rows} rows of serials and {failures} rows of failure', 'success')
+            os.remove(file_path)
+            return redirect('/')
 
 
 # Somewhere to login

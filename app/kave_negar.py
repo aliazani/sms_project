@@ -5,3 +5,6 @@ USERNAME = ''
 PASSWORD = ''
 
 SECRET_KEY = ''
+
+UPLOAD_FOLDER = ''
+ALLOWED_EXTENSION = {'xlsx'}
