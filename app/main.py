@@ -173,19 +173,38 @@ def send_sms(receptor, message):
     response = requests.post(url, data)
 
 
-def normalize_string(string):
+def normalize_string(serial_number, fixed_length=30):
     """
     This function will change all the letters to the upper and convert persian digits to english digits.
-    :param string: The string that is also the serial number
+    :param serial_number: The string that is also the serial number
+    :param fixed_length : This will fix the length of serial number
     :return: converted serial number
     """
-    from_character = '۱۲۳۴۵۶۷۸۹۰'
-    to_character = '1234567890'
-    for i in range(len(from_character)):
-        string = string.replace(from_character[i], to_character[i])
-    string = string.upper()
-    string = re.sub(r'\W', '', string)  # for fix sql injection
-    return string
+    # remove any non-alphanumeric character
+    serial_number = re.sub(r'\W+', '', serial_number)
+    serial_number = serial_number.upper()
+
+    # replace persian and arabic numeric chars to standard format
+    from_persian_char = '۱۲۳۴۵۶۷۸۹۰'
+    from_arabic_char = '١٢٣٤٥٦٧٨٩٠'
+    to_char = '1234567890'
+    for i in range(len(to_char)):
+        serial_number = serial_number.replace(from_persian_char[i], to_char[i])
+        serial_number = serial_number.replace(from_arabic_char[i], to_char[i])
+
+    # separate the alphabetic and numeric part of the serial number
+    all_alpha = ''
+    all_digit = ''
+    for character in serial_number:
+        if character.isalpha():
+            all_alpha += character
+        elif character.isdigit():
+            all_digit += character
+
+    # add zeros between alphabetic and numeric parts to standardize the length of the serial number
+    missing_zeros = fixed_length - len(all_alpha) - len(all_digit)
+    serial_number = all_alpha + '0' * missing_zeros + all_digit
+    return serial_number
 
 
 @app.route('/v1/process', methods=['POST'])
