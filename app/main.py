@@ -269,11 +269,11 @@ def check_serial(serial):
     cur = conn.cursor()
     query = f"SELECT * FROM invalids WHERE invalid_serial == '{serial}'"
     results = cur.execute(query)
-    if (results.fetchall()) == 1:
+    if len(results.fetchall()) > 0:
         return 'This is not original product.'
     query = f"SELECT * FROM serials WHERE start_serial start_serial <'{serial}' AND end_serial < '{serial}'"
     results = cur.execute(query)
-    if (results.fetchall()) == 1:
+    if len(results.fetchall()) == 1:
         return 'I found your serial'
 
     return 'It was not in the db'
