@@ -271,7 +271,7 @@ def check_serial(serial):
     results = cur.execute(query)
     if len(results.fetchall()) > 0:
         return 'This is not original product.'
-    query = f"SELECT * FROM serials WHERE start_serial start_serial <'{serial}' AND end_serial < '{serial}'"
+    query = f"SELECT * FROM serials WHERE start_serial start_serial <='{serial}' AND end_serial <= '{serial}'"
     results = cur.execute(query)
     if len(results.fetchall()) == 1:
         return 'I found your serial'
