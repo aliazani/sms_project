@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, flash, request, Response, redirect, url_for, session, abort
+from flask import Flask, jsonify, flash, request, Response, redirect, url_for, session, render_template, abort
 from flask_login import LoginManager, UserMixin, login_required, login_user, logout_user
 from werkzeug.utils import secure_filename
 from pandas import read_excel
@@ -75,42 +75,41 @@ def home():
             flash(f'Imported {rows} rows of serials and {failures} rows of failure', 'success')
             os.remove(file_path)
             return redirect('/')
+    return render_template('index.html')
 
 
 # Somewhere to login
 @app.route('/login', methods=['GET', 'POST'])
-@Limiter.limit('5 per minute')
+@limiter.limit("5 per minute")
 def login():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
         if password == kave_negar.PASSWORD and username == kave_negar.USERNAME:
             login_user(user)
-            return redirect(request.args.get('next'))
+            return redirect('/')
         else:
             return abort(401)
     else:
-        return Response('''
-        <form action="" method="post">
-            <p><input type=text name=username>
-            <p><input type=password name=password>
-            <p><input type=submit value=Login>
-        </form>
-        ''')
+        return render_template('login.html')
 
 
 # Somewhere to logout
 @app.route('/logout')
 @login_required
 def logout():
+    """ logs out of the admin user"""
     logout_user()
-    return Response('<>Logged out</p>')
+    flash('Logged out', 'success')
+    return redirect('/login')
 
 
 # Handle login failed
 @app.errorhandler(401)
-def page_not_found(error):
-    return Response('<p>Login failed</p>')
+def unauthorized(error):
+    """ handling login failures"""
+    flash('Login problem', 'danger')
+    return redirect('/login')
 
 
 # Callback to reload the user object
