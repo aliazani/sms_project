@@ -8,3 +8,5 @@ SECRET_KEY = ''
 
 UPLOAD_FOLDER = ''
 ALLOWED_EXTENSION = {'xlsx'}
+
+CALL_BACK_TOKEN = ''

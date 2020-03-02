@@ -249,7 +249,7 @@ def normalize_string(serial_number, fixed_length=30):
     return serial_number
 
 
-@app.route('/v1/process', methods=['POST'])
+@app.route(f'/v1/{kave_negar.CALL_BACK_TOKEN}/process', methods=['POST'])
 def process():
     """
     This is a call back from KaveNegar that will get sender and message
