@@ -2,6 +2,8 @@ from flask import Flask, jsonify, flash, request, Response, redirect, url_for, s
 from flask_login import LoginManager, UserMixin, login_required, login_user, logout_user
 from werkzeug.utils import secure_filename
 from pandas import read_excel
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 import requests
 import sqlite3
 import re
@@ -9,6 +11,9 @@ import os
 import kave_negar
 
 app = Flask(__name__)
+
+# Add Flask limiter
+limiter = Limiter(app, key_func=get_remote_address)
 
 # Upload file
 upload_folder = kave_negar.UPLOAD_FOLDER
@@ -74,6 +79,7 @@ def home():
 
 # Somewhere to login
 @app.route('/login', methods=['GET', 'POST'])
+@Limiter.limit('5 per minute')
 def login():
     if request.method == 'POST':
         username = request.form['username']
