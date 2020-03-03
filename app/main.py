@@ -154,7 +154,7 @@ def import_database_from_excel(file_path):
     cur.execute('DROP TABLE IF EXISTS serials')
 
     cur.execute('''
-    CREATE TABLE  IF EXISTS serials (
+    CREATE TABLE serials (
     id INTEGER PRIMARY KEY,
     reference TEXT ,
     description TEXT ,
@@ -171,9 +171,8 @@ def import_database_from_excel(file_path):
         start_serial = normalize_string(start_serial)
         end_serial = normalize_string(end_serial)
         if serials_counter % 10 == 0:
-            query = f'INSERT INTO serials VALUES ' \
-                    f'("{row}", "{reference_number}", "{description}", "{start_serial}", "{end_serial}", "{date}");'
-            cur.execute(query)
+            query = 'INSERT INTO serials VALUES (?, ?, ?, ?, ?, ?);'
+            cur.execute(query, (row, reference_number, description, start_serial, end_serial, date))
             conn.commit()
         serials_counter += 1
     conn.commit()
@@ -185,14 +184,14 @@ def import_database_from_excel(file_path):
     cur.execute('DROP TABLE IF EXISTS invalids')
 
     cur.execute('''
-    CREATE TABLE  IF EXISTS invalids (
+    CREATE TABLE invalids (
         invalid_serial TEXT PRIMARY KEY);''')
     conn.commit()
     # Insert Data into invalids table
     for index, (failed_serial,) in data_frame.iterrows():
         if invalid_counter % 10 == 0:
-            query = f'INSERT INTO invalids VALUES ("{failed_serial}");'
-            cur.execute(query)
+            query = 'INSERT INTO invalids VALUES (?);'
+            cur.execute(query, (failed_serial,))
             conn.commit()
         invalid_counter += 1
     conn.commit()
@@ -272,12 +271,12 @@ def check_serial(serial):
     # Connect to database
     conn = sqlite3.connect(kave_negar.DATA_BASE_FILE_PATH)
     cur = conn.cursor()
-    query = f"SELECT * FROM invalids WHERE invalid_serial == '{serial}'"
-    results = cur.execute(query)
+    query = "SELECT * FROM invalids WHERE invalid_serial == ?"
+    results = cur.execute(query, (serial,))
     if len(results.fetchall()) > 0:
         return 'This is not original product.'
-    query = f"SELECT * FROM serials WHERE start_serial start_serial <='{serial}' AND end_serial <= '{serial}'"
-    results = cur.execute(query)
+    query = f"SELECT * FROM serials WHERE start_serial start_serial <= ?' AND end_serial <= ? "
+    results = cur.execute(query, (serial, serial))
     if len(results.fetchall()) == 1:
         return 'I found your serial'
 
