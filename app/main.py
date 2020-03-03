@@ -284,16 +284,18 @@ def check_serial(serial):
     :return:The text that say us if the serial is valid or not.
     """
     # Connect to database
-    conn = sqlite3.connect(kave_negar.DATA_BASE_FILE_PATH)
-    cur = conn.cursor()
+    db = get_database_connection()
+    cur = db.cursor()
     query = "SELECT * FROM invalids WHERE invalid_serial == %s;"
     results = cur.execute(query, (serial,))
-    if len(results.fetchall()) > 0:
+    if results > 0:
         return 'This is not original product.'
     query = "SELECT * FROM serials WHERE start_serial start_serial <= %s AND end_serial <= %s;"
     results = cur.execute(query, (serial, serial))
-    if len(results.fetchall()) == 1:
-        return 'I found your serial'
+    if results == 1:
+        ret = cur.fetchone()
+        description = ret[2]
+        return 'I found your serial' + description
 
     return 'It was not in the db'
 
