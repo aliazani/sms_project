@@ -1,13 +1,13 @@
+import requests
+import re
+import os
 from flask import Flask, jsonify, flash, request, Response, redirect, url_for, session, render_template, abort
-from flask_login import LoginManager, UserMixin, login_required, login_user, logout_user
+from flask_login import LoginManager, UserMixin, login_required, login_user, logout_user, current_user
 from werkzeug.utils import secure_filename
 from pandas import read_excel
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-import requests
-import sqlite3
-import re
-import os
+import pymysql
 import kave_negar
 
 app = Flask(__name__)
@@ -82,6 +82,10 @@ def home():
 @app.route('/login', methods=['GET', 'POST'])
 @limiter.limit("5 per minute")
 def login():
+    """ user login: only for admin user (system has no other user than admin)
+    Note: there is a 10 tries per minute limitation to admin login to avoid minimize password factoring"""
+    if current_user.is_authenticated:
+        return redirect('/')
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
@@ -128,6 +132,15 @@ def health_check():
     return jsonify(return_message)
 
 
+def get_database_connection():
+    """connects to the MySQL database and returns the connection"""
+    return pymysql.connect(host=kave_negar.MYSQL_HOST,
+                           user=kave_negar.MYSQL_USERNAME,
+                           password=kave_negar.MYSQL_PASSWORD,
+                           db=kave_negar.MYSQL_DB,
+                           charset='utf8')
+
+
 @app.route('/')
 def hello():
     return 'Hello World'
@@ -139,29 +152,28 @@ def import_database_from_excel(file_path):
     The first(0) sheet contains serials data like:
      Row    Reference Number    Description Start serial    End serial  Date
     And the 2nd(1) contains a column of invalid serials.
-    This data will be written into the sqlite database located at kave_negar.DATA_BASE_FILE_PATH
+    This data will be written into the Mysql_server database at Fandogh(Platform as service)
     in two tables "serials" , "invalids".
 
-    :param file_path: The path of excel file is in kave_negar.DATA_BASE_FILE_PATH
     :return: Two integers (number of serial rows, number of invalid rows)
     """
     # Create Database and connect to it.
-    conn = sqlite3.connect(kave_negar.DATA_BASE_FILE_PATH)
-    cur = conn.cursor()
+    db = get_database_connection()
+    cur = db.cursor()
 
     # valid serials
     # Create serials table
-    cur.execute('DROP TABLE IF EXISTS serials')
+    cur.execute('DROP TABLE IF EXISTS serials;')
 
     cur.execute('''
     CREATE TABLE serials (
     id INTEGER PRIMARY KEY,
-    reference TEXT ,
-    description TEXT ,
-    start_serial TEXT ,
-    end_serial TEXT,
-    date DATE);''')
-    conn.commit()
+    reference VARCHAR(200) ,
+    description  VARCHAR(200) ,
+    start_serial  CHAR(30) ,
+    end_serial  CHAR(30),
+    date DATETIME);''')
+    db.commit()
 
     # Insert Data into serials table
     serials_counter = 0
@@ -170,31 +182,34 @@ def import_database_from_excel(file_path):
     for index, (row, reference_number, description, start_serial, end_serial, date) in data_frame.iterrows():
         start_serial = normalize_string(start_serial)
         end_serial = normalize_string(end_serial)
+        query = 'INSERT INTO serials VALUES (%s, %s, %s, %s, %s, %s);'
+        cur.execute(query, (row, reference_number, description, start_serial, end_serial, date))
+
         if serials_counter % 10 == 0:
-            query = 'INSERT INTO serials VALUES (?, ?, ?, ?, ?, ?);'
-            cur.execute(query, (row, reference_number, description, start_serial, end_serial, date))
-            conn.commit()
+            db.commit()
         serials_counter += 1
-    conn.commit()
+    db.commit()
 
     # Failure serials
     data_frame = read_excel(file_path, 1)  # This contains fail serial numbers.
     # Create invalid table
     invalid_counter = 0
-    cur.execute('DROP TABLE IF EXISTS invalids')
+    cur.execute('DROP TABLE IF EXISTS invalids;')
 
     cur.execute('''
     CREATE TABLE invalids (
-        invalid_serial TEXT PRIMARY KEY);''')
-    conn.commit()
+        invalid_serial CHAR(30));''')
+    db.commit()
     # Insert Data into invalids table
     for index, (failed_serial,) in data_frame.iterrows():
+        failed_serial = normalize_string(failed_serial)
+        query = 'INSERT INTO invalids VALUES (%s);'
+        cur.execute(query, (failed_serial,))
         if invalid_counter % 10 == 0:
-            query = 'INSERT INTO invalids VALUES (?);'
-            cur.execute(query, (failed_serial,))
-            conn.commit()
+            db.commit()
         invalid_counter += 1
-    conn.commit()
+    db.commit()
+    db.close()
     return serials_counter, invalid_counter
 
 
@@ -271,11 +286,11 @@ def check_serial(serial):
     # Connect to database
     conn = sqlite3.connect(kave_negar.DATA_BASE_FILE_PATH)
     cur = conn.cursor()
-    query = "SELECT * FROM invalids WHERE invalid_serial == ?"
+    query = "SELECT * FROM invalids WHERE invalid_serial == %s;"
     results = cur.execute(query, (serial,))
     if len(results.fetchall()) > 0:
         return 'This is not original product.'
-    query = f"SELECT * FROM serials WHERE start_serial start_serial <= ?' AND end_serial <= ? "
+    query = "SELECT * FROM serials WHERE start_serial start_serial <= %s AND end_serial <= %s;"
     results = cur.execute(query, (serial, serial))
     if len(results.fetchall()) == 1:
         return 'I found your serial'
