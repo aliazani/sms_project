@@ -13,6 +13,8 @@ import kave_negar
 
 app = Flask(__name__)
 
+MAX_FLASH = 10
+
 # Add Flask limiter
 limiter = Limiter(app, key_func=get_remote_address)
 
@@ -37,6 +39,7 @@ app.config.update(SECRET_KEY=kave_negar.SECRET_KEY)
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'Login'
+login_manager.login_message_category = 'danger'
 
 
 class User(UserMixin):
@@ -172,6 +175,7 @@ def create_sms_table():
 # Callback to reload the user object
 @login_manager.user_loader
 def loader_user(user_id):
+    """To load a user for flask login"""
     return User(user_id)
 
 
@@ -194,11 +198,6 @@ def get_database_connection():
                            charset='utf8')
 
 
-@app.route('/')
-def hello():
-    return 'Hello World'
-
-
 def import_database_from_excel(file_path):
     """
     Get an excel file name and import lookup data (data and failure) from it.
@@ -213,54 +212,93 @@ def import_database_from_excel(file_path):
     # Create Database and connect to it.
     db = get_database_connection()
     cur = db.cursor()
+    total_flashes = 0
+    try:
+        # valid serials
+        # Create serials table
+        cur.execute('DROP TABLE IF EXISTS serials;')
 
-    # valid serials
-    # Create serials table
-    cur.execute('DROP TABLE IF EXISTS serials;')
-
-    cur.execute('''
-    CREATE TABLE serials (
-    id INTEGER PRIMARY KEY,
-    reference VARCHAR(200) ,
-    description  VARCHAR(200) ,
-    start_serial  CHAR(30) ,
-    end_serial  CHAR(30),
-    date DATETIME, INDEX(start_serial, end_serial));''')
-    db.commit()
+        cur.execute('''
+        CREATE TABLE serials (
+        id INTEGER PRIMARY KEY,
+        reference VARCHAR(200) ,
+        description  VARCHAR(200) ,
+        start_serial  CHAR(30) ,
+        end_serial  CHAR(30),
+        date DATETIME, INDEX(start_serial, end_serial));''')
+        db.commit()
+    except Exception as error:
+        flash(f'Error dropping and creating SERIALS table; {error}', 'danger')
 
     # Insert Data into serials table
-    serials_counter = 0
+    serials_counter = 1
+    line_number = 1
     data_frame = read_excel(file_path, 0)
+    for _, (row, reference_number, description, start_serial, end_serial, date) in data_frame.iterrows():
+        line_number += 1
+        try:
+            start_serial = normalize_string(start_serial)
+            end_serial = normalize_string(end_serial)
+            query = 'INSERT INTO serials VALUES (%s, %s, %s, %s, %s, %s);'
+            cur.execute(query, (row, reference_number, description, start_serial, end_serial, date))
+            serials_counter += 1
 
-    for index, (row, reference_number, description, start_serial, end_serial, date) in data_frame.iterrows():
-        start_serial = normalize_string(start_serial)
-        end_serial = normalize_string(end_serial)
-        query = 'INSERT INTO serials VALUES (%s, %s, %s, %s, %s, %s);'
-        cur.execute(query, (row, reference_number, description, start_serial, end_serial, date))
+        except Exception as error:
+            total_flashes += 1
+            if total_flashes < MAX_FLASH:
+                flash(
+                    f'Error inserting line {line_number} from serials sheet SERIALS, {error}',
+                    'danger')
+            elif total_flashes == MAX_FLASH:
+                flash(f'Too many errors!', 'danger')
 
-        if serials_counter % 10 == 0:
-            db.commit()
-        serials_counter += 1
+        if line_number % 1000 == 0:
+            try:
+                db.commit()
+            except Exception as error:
+                flash(f'problem committing serials into db around {line_number} (or previous 20 ones); {error}')
+
     db.commit()
 
-    # Failure serials
+    # now lets save the invalid serials.
+    # remove the invalid table if exists, then create the new one
+
+    try:
+        cur.execute('DROP TABLE IF EXISTS invalids;')
+        cur.execute('''
+        CREATE TABLE invalids (
+            invalid_serial CHAR(30), INDEX(invalid_serial));''')
+        db.commit()
+    except Exception as e:
+        flash(f'Error dropping and creating INVALIDS table; {e}', 'danger')
+
+    invalid_counter = 1
+    line_number = 1
     data_frame = read_excel(file_path, 1)  # This contains fail serial numbers.
-    # Create invalid table
-    invalid_counter = 0
-    cur.execute('DROP TABLE IF EXISTS invalids;')
-
-    cur.execute('''
-    CREATE TABLE invalids (
-        invalid_serial CHAR(30), INDEX(invalid_serial));''')
-    db.commit()
     # Insert Data into invalids table
-    for index, (failed_serial,) in data_frame.iterrows():
-        failed_serial = normalize_string(failed_serial)
-        query = 'INSERT INTO invalids VALUES (%s);'
-        cur.execute(query, (failed_serial,))
-        if invalid_counter % 10 == 0:
-            db.commit()
-        invalid_counter += 1
+    for _, (failed_serial,) in data_frame.iterrows():
+        line_number += 1
+        try:
+            failed_serial = normalize_string(failed_serial)
+            query = 'INSERT INTO invalids VALUES (%s);'
+            cur.execute(query, (failed_serial,))
+            invalid_counter += 1
+
+        except Exception as e:
+            total_flashes += 1
+            if total_flashes < MAX_FLASH:
+                flash(
+                    f'Error inserting line {line_number} from serials sheet INVALIDS, {e}',
+                    'danger')
+            elif total_flashes == MAX_FLASH:
+                flash(f'Too many errors!', 'danger')
+
+        if line_number % 1000 == 0:
+            try:
+                db.commit()
+            except Exception as e:
+                flash(f'problem committing invalid serials into db around {line_number} (or previous 20 ones); {e}')
+
     db.commit()
     db.close()
     return serials_counter, invalid_counter
