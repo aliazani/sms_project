@@ -39,11 +39,11 @@ login_manager.login_view = 'Login'
 
 
 class User(UserMixin):
-    def __init__(self, identifier):
-        self.identifier = identifier
+    def __init__(self, id):
+        self.id = id
 
     def __repr__(self):
-        return "%d" % self.identifier
+        return "%d" % self.id
 
 
 # Create some user with id
