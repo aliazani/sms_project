@@ -1,6 +1,7 @@
 import requests
 import re
 import os
+import time
 from flask import Flask, jsonify, flash, request, Response, redirect, url_for, session, render_template, abort
 from flask_login import LoginManager, UserMixin, login_required, login_user, logout_user, current_user
 from werkzeug.utils import secure_filename
@@ -75,7 +76,33 @@ def home():
             flash(f'Imported {rows} rows of serials and {failures} rows of failure', 'success')
             os.remove(file_path)
             return redirect('/')
-    return render_template('index.html')
+
+    db = get_database_connection()
+    cur = db.cursor()
+
+    # get last 5000 sms
+    cur.execute("SELECT * FROM PROCESSED_SMS ORDER BY date DESC LIMIT 5000")
+    all_smss = cur.fetchall()
+    smss = []
+    for sms in all_smss:
+        status, sender, message, answer, date = sms
+        smss.append({'status': status, 'sender': sender, 'message': message, 'answer': answer, 'date': date})
+
+    # collect some stats for the GUI
+    cur.execute("SELECT count(*) FROM PROCESSED_SMS WHERE status = 'OK'")
+    num_ok = cur.fetchone()[0]
+
+    cur.execute("SELECT count(*) FROM PROCESSED_SMS WHERE status = 'FAILURE'")
+    num_failure = cur.fetchone()[0]
+
+    cur.execute("SELECT count(*) FROM PROCESSED_SMS WHERE status = 'DOUBLE'")
+    num_double = cur.fetchone()[0]
+
+    cur.execute("SELECT count(*) FROM PROCESSED_SMS WHERE status = 'NOT-FOUND'")
+    num_not_found = cur.fetchone()[0]
+
+    return render_template('index.html', data={'smss': smss, 'ok': num_ok, 'failure': num_failure, 'double': num_double,
+                                               'not_found': num_not_found})
 
 
 # Somewhere to login
@@ -114,6 +141,32 @@ def unauthorized(error):
     """ handling login failures"""
     flash('Login problem', 'danger')
     return redirect('/login')
+
+
+@app.errorhandler(404)
+def page_not_found(error):
+    """ returns 404 page"""
+    return render_template('404.html'), 404
+
+
+def create_sms_table():
+    """Creates PROCESSED_SMS table on database if it's not exists."""
+    db = get_database_connection()
+    cur = db.cursor()
+
+    try:
+        cur.execute("""CREATE TABLE IF NOT EXISTS PROCESSED_SMS (
+            status ENUM('OK', 'FAILURE', 'DOUBLE', 'NOT-FOUND'),
+            sender CHAR(20),
+            message VARCHAR(400),
+            answer VARCHAR(400),
+            date DATETIME, INDEX(date, status));""")
+        db.commit()
+
+    except Exception as error:
+        flash(f'Error creating PROCESSED_SMS table; {error}', 'danger')
+
+    db.close()
 
 
 # Callback to reload the user object
@@ -172,7 +225,7 @@ def import_database_from_excel(file_path):
     description  VARCHAR(200) ,
     start_serial  CHAR(30) ,
     end_serial  CHAR(30),
-    date DATETIME);''')
+    date DATETIME, INDEX(start_serial, end_serial));''')
     db.commit()
 
     # Insert Data into serials table
@@ -198,7 +251,7 @@ def import_database_from_excel(file_path):
 
     cur.execute('''
     CREATE TABLE invalids (
-        invalid_serial CHAR(30));''')
+        invalid_serial CHAR(30), INDEX(invalid_serial));''')
     db.commit()
     # Insert Data into invalids table
     for index, (failed_serial,) in data_frame.iterrows():
@@ -266,15 +319,36 @@ def normalize_string(serial_number, fixed_length=30):
 def process():
     """
     This is a call back from KaveNegar that will get sender and message
-     and will check if it is valid , then answers back.
+    and will check if it is valid , then answers back.
+    This is secured by 'CALL_BACK_TOKEN' in order to avoid mal-intended calls
     :return:
     """
     data = request.form
     sender = data['from']
     message = normalize_string(data['message'])
-    answer = check_serial(message)
+    status, answer = check_serial(message)
+
+    db = get_database_connection()
+    cur = db.cursor()
+    now = time.strftime('%Y-%m-%d %H:%M:%S')
+    cur.execute("INSERT INTO PROCESSED_SMS (status, sender, message, answer, date) VALUES (%s, %s, %s, %s, %s)",
+                (status, sender, message, answer, now))
+    db.commit()
+    db.close()
+
     send_sms(sender, answer)
     return jsonify(data), 200
+
+
+@app.route('check_one_serial', methods=['POST'])
+@login_required
+def check_one_serial():
+    """ to check whether a serial number is valid or not"""
+    serial_to_check = request.form["serial"]
+    status, answer = check_serial(serial_to_check)
+    flash(f'{status} - {answer}', 'info')
+
+    return redirect('/')
 
 
 def check_serial(serial):
@@ -283,22 +357,31 @@ def check_serial(serial):
     :param serial: The serial number we want to check the validity.
     :return:The text that say us if the serial is valid or not.
     """
+    original_serial = serial
+    serial = normalize_string(serial)
     # Connect to database
     db = get_database_connection()
     cur = db.cursor()
     query = "SELECT * FROM invalids WHERE invalid_serial == %s;"
     results = cur.execute(query, (serial,))
     if results > 0:
-        return 'This is not original product.'
+        db.close()
+        return 'FAILURE', 'This is not original product.'
     query = "SELECT * FROM serials WHERE start_serial start_serial <= %s AND end_serial <= %s;"
     results = cur.execute(query, (serial, serial))
-    if results == 1:
+    if results > 1:
+        db.close()
+        return 'DOUBLE', 'I found your serial.'
+    elif results == 1:
         ret = cur.fetchone()
         description = ret[2]
-        return 'I found your serial' + description
+        db.close()
+        return 'OK', 'I found your serial' + description
 
-    return 'It was not in the db'
+    db.close()
+    return 'NOT-FOUND', 'It was not in the db'
 
 
 if __name__ == '__main__':
+    create_sms_table()
     app.run(host='0.0.0.0', port=3000, debug=True)
