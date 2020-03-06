@@ -1,3 +1,4 @@
+import datetime
 import requests
 import re
 import os
@@ -363,7 +364,7 @@ def process():
     """
     data = request.form
     sender = data['from']
-    message = normalize_string(data['message'])
+    message = data['message']
     status, answer = check_serial(message)
 
     db = get_database_connection()
@@ -404,20 +405,35 @@ def check_serial(serial):
     results = cur.execute(query, (serial,))
     if results > 0:
         db.close()
-        return 'FAILURE', 'This is not original product.'
+        answer = f'''This "{original_serial}" serial number is not original product.'''
+        return 'FAILURE', answer
+
     query = "SELECT * FROM serials WHERE start_serial start_serial <= %s AND end_serial <= %s;"
     results = cur.execute(query, (serial, serial))
+
     if results > 1:
         db.close()
+        answer = f'''This "{original_serial}" is valid for more details please contact us.'''
+
         return 'DOUBLE', 'I found your serial.'
+
     elif results == 1:
+
         ret = cur.fetchone()
         description = ret[2]
+        reference_number = ret[1]
+        date = ret[5].date()
         db.close()
-        return 'OK', 'I found your serial' + description
+        answer = f'''{original_serial}
+{reference_number}
+{description}
+Hologram date: {date}
+Genuine product '''
+        return 'OK', answer
 
     db.close()
-    return 'NOT-FOUND', 'It was not in the db'
+    answer = f'''This "{original_serial}" serial is not genuine.'''
+    return 'NOT-FOUND', answer
 
 
 if __name__ == '__main__':
