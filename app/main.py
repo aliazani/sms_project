@@ -433,6 +433,73 @@ def check_serial(serial):
     return 'NOT-FOUND', answer
 
 
+@app.route("/database_check")
+@login_required
+def db_check():
+    """ will do some sanity checks on the db and will flash the errors """
+
+    def collision(start_1, end_1, start_2, end_2):
+        if start_2 <= start_1 <= end_2:
+            return True
+        if start_2 <= end_1 <= end_2:
+            return True
+        if start_1 <= start_2 <= end_1:
+            return True
+        if start_1 <= end_2 <= end_1:
+            return True
+        return False
+
+    def separate(input_string):
+        """ gets AA0000000000000000000000000090 and returns AA, 90 """
+        digit_part = ''
+        alpha_part = ''
+        for character in input_string:
+            if character.isalpha():
+                alpha_part += character
+            elif character.isdigit():
+                digit_part += character
+        return alpha_part, int(digit_part)
+
+    db = get_database_connection()
+    cur = db.cursor()
+
+    cur.execute("SELECT id, start_serial, end_serial FROM serials")
+
+    raw_data = cur.fetchall()
+
+    data = {}
+    flashed = 0
+    for row in raw_data:
+        id_row, start_serial, end_serial = row
+        start_serial_alpha, start_serial_digit = separate(start_serial)
+        end_serial_alpha, end_serial_digit = separate(end_serial)
+        if start_serial_alpha != end_serial_alpha:
+            flashed += 1
+            if flashed < MAX_FLASH:
+                flash(f'start serial and end serial of row {id_row} start with different letters', 'danger')
+            elif flashed == MAX_FLASH:
+                flash('too many starts with different letters', 'danger')
+        else:
+            if start_serial_alpha not in data:
+                data[start_serial_alpha] = []
+            data[start_serial_alpha].append((id_row, start_serial_digit, end_serial_digit))
+
+    flashed = 0
+    for letters in data:
+        for i in range(len(data[letters])):
+            for j in range(i + 1, len(data[letters])):
+                id_row_1, start_serial_1, end_serial_1 = data[letters][i]
+                id_row_2, start_serial_2, end_serial_2 = data[letters][j]
+                if collision(start_serial_1, end_serial_1, start_serial_2, end_serial_2):
+                    flashed += 1
+                    if flashed < MAX_FLASH:
+                        flash(f'there is a collision between row ids {id_row_1} and {id_row_2}', 'danger')
+                    elif flashed == MAX_FLASH:
+                        flash(f'Too many collisions', 'danger')
+
+    return redirect('/')
+
+
 if __name__ == '__main__':
     create_sms_table()
     app.run(host='0.0.0.0', port=3000, debug=True)
