@@ -400,38 +400,35 @@ def check_serial(serial):
     serial = normalize_string(serial)
     # Connect to database
     db = get_database_connection()
-    cur = db.cursor()
-    query = "SELECT * FROM invalids WHERE invalid_serial == %s;"
-    results = cur.execute(query, (serial,))
-    if results > 0:
-        db.close()
-        answer = f'''This "{original_serial}" serial number is not original product.'''
-        return 'FAILURE', answer
+    with db.cursor() as cur:
+        query = "SELECT * FROM invalids WHERE invalid_serial == %s;"
+        results = cur.execute(query, (serial,))
 
-    query = "SELECT * FROM serials WHERE start_serial start_serial <= %s AND end_serial <= %s;"
-    results = cur.execute(query, (serial, serial))
+        if results > 0:
+            answer = f'''This "{original_serial}" serial number is not original product.'''
+            return 'FAILURE', answer
 
-    if results > 1:
-        db.close()
-        answer = f'''This "{original_serial}" is valid for more details please contact us.'''
+        query = "SELECT * FROM serials WHERE start_serial start_serial <= %s AND end_serial <= %s;"
+        results = cur.execute(query, (serial, serial))
 
-        return 'DOUBLE', 'I found your serial.'
+        if results > 1:
+            answer = f'''This "{original_serial}" is valid for more details please contact us.'''
 
-    elif results == 1:
+            return 'DOUBLE', answer
 
-        ret = cur.fetchone()
-        description = ret[2]
-        reference_number = ret[1]
-        date = ret[5].date()
-        db.close()
-        answer = f'''{original_serial}
-{reference_number}
-{description}
-Hologram date: {date}
-Genuine product '''
-        return 'OK', answer
+        elif results == 1:
 
-    db.close()
+            ret = cur.fetchone()
+            description = ret[2]
+            reference_number = ret[1]
+            date = ret[5].date()
+            answer = f'''{original_serial}
+            {reference_number}
+            {description}
+            Hologram date: {date}
+            Genuine product '''
+            return 'OK', answer
+
     answer = f'''This "{original_serial}" serial is not genuine.'''
     return 'NOT-FOUND', answer
 
