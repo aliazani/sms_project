@@ -10,7 +10,7 @@ from pandas import read_excel
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import pymysql
-import kave_negar
+import configs
 
 app = Flask(__name__)
 
@@ -20,8 +20,8 @@ MAX_FLASH = 10
 limiter = Limiter(app, key_func=get_remote_address)
 
 # Upload file
-upload_folder = kave_negar.UPLOAD_FOLDER
-allowed_extension = kave_negar.ALLOWED_EXTENSION
+upload_folder = configs.UPLOAD_FOLDER
+allowed_extension = configs.ALLOWED_EXTENSION
 app.config['UPLOAD_FOLDER'] = upload_folder
 
 
@@ -34,7 +34,7 @@ def allowed_file(filename):
 
 
 # config
-app.config.update(SECRET_KEY=kave_negar.SECRET_KEY)
+app.config.update(SECRET_KEY=configs.SECRET_KEY)
 
 # Flask Login
 login_manager = LoginManager()
@@ -120,7 +120,7 @@ def login():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
-        if password == kave_negar.PASSWORD and username == kave_negar.USERNAME:
+        if password == configs.PASSWORD and username == configs.USERNAME:
             login_user(user)
             return redirect('/')
         else:
@@ -180,7 +180,7 @@ def loader_user(user_id):
     return User(user_id)
 
 
-@app.route('v1/ok')
+@app.route('/ok')
 def health_check():
     """
     This function is for saying every thing is fine.
@@ -192,10 +192,10 @@ def health_check():
 
 def get_database_connection():
     """connects to the MySQL database and returns the connection"""
-    return pymysql.connect(host=kave_negar.MYSQL_HOST,
-                           user=kave_negar.MYSQL_USERNAME,
-                           password=kave_negar.MYSQL_PASSWORD,
-                           db=kave_negar.MYSQL_DB,
+    return pymysql.connect(host=configs.MYSQL_HOST,
+                           user=configs.MYSQL_USERNAME,
+                           password=configs.MYSQL_PASSWORD,
+                           db=configs.MYSQL_DB,
                            charset='utf8')
 
 
@@ -313,7 +313,7 @@ def send_sms(receptor, message):
     :return:
     """
 
-    url = f'https://api.kavenegar.com/v1/{kave_negar.API_KEY}/sms/send.json'
+    url = f'https://api.kavenegar.com/{configs.API_KEY}/sms/send.json'
     data = {'receptor': receptor,
             'message': message}
 
@@ -354,7 +354,7 @@ def normalize_string(serial_number, fixed_length=30):
     return serial_number
 
 
-@app.route(f'/v1/{kave_negar.CALL_BACK_TOKEN}/process', methods=['POST'])
+@app.route(f'/{configs.CALL_BACK_TOKEN}/process', methods=['POST'])
 def process():
     """
     This is a call back from KaveNegar that will get sender and message
