@@ -3,13 +3,14 @@ import requests
 import re
 import os
 import time
+import pymysql
 from flask import Flask, jsonify, flash, request, Response, redirect, url_for, session, render_template, abort
 from flask_login import LoginManager, UserMixin, login_required, login_user, logout_user, current_user
 from werkzeug.utils import secure_filename
 from pandas import read_excel
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-import pymysql
+from textwrap import dedent
 import configs
 
 app = Flask(__name__)
@@ -39,7 +40,7 @@ app.config.update(SECRET_KEY=configs.SECRET_KEY)
 # Flask Login
 login_manager = LoginManager()
 login_manager.init_app(app)
-login_manager.login_view = 'Login'
+login_manager.login_view = 'login'
 login_manager.login_message_category = 'danger'
 
 
@@ -320,6 +321,22 @@ def send_sms(receptor, message):
     response = requests.post(url, data)
 
 
+def translate_numbers(current, new, string):
+    """This function will replace another languages numerals to english numerals.
+    :param current : another languages numerals
+    :param new : english numerals
+    :param string : will be replaced to english
+    """
+    translation_table = str.maketrans(current, new)
+    return string.translate(translation_table)
+
+
+def remove_non_alphanum_char(string):
+    """This function will remove non alpha numeric characters.
+    """
+    return re.sub(r'\W+', '', string)
+
+
 def normalize_string(serial_number, fixed_length=30):
     """
     This function will change all the letters to the upper and convert persian digits to english digits.
@@ -328,17 +345,16 @@ def normalize_string(serial_number, fixed_length=30):
     :return: converted serial number
     """
     # remove any non-alphanumeric character
-    serial_number = re.sub(r'\W+', '', serial_number)
+    serial_number = remove_non_alphanum_char(serial_number)
     serial_number = serial_number.upper()
 
     # replace persian and arabic numeric chars to standard format
-    from_persian_char = '۱۲۳۴۵۶۷۸۹۰'
-    from_arabic_char = '١٢٣٤٥٦٧٨٩٠'
-    to_char = '1234567890'
-    for i in range(len(to_char)):
-        serial_number = serial_number.replace(from_persian_char[i], to_char[i])
-        serial_number = serial_number.replace(from_arabic_char[i], to_char[i])
+    persian_numerals = '۱۲۳۴۵۶۷۸۹۰'
+    arabic_numerals = '١٢٣٤٥٦٧٨٩٠'
+    english_numerals = '1234567890'
 
+    serial_number = translate_numbers(persian_numerals, english_numerals, serial_number)
+    serial_number = translate_numbers(arabic_numerals, english_numerals, serial_number)
     # separate the alphabetic and numeric part of the serial number
     all_alpha = ''
     all_digit = ''
@@ -379,7 +395,7 @@ def process():
     return jsonify(data), 200
 
 
-@app.route('check_one_serial', methods=['POST'])
+@app.route('/check_one_serial', methods=['POST'])
 @login_required
 def check_one_serial():
     """ to check whether a serial number is valid or not"""
@@ -405,14 +421,14 @@ def check_serial(serial):
         results = cur.execute(query, (serial,))
 
         if results > 0:
-            answer = f'''This "{original_serial}" serial number is not original product.'''
+            answer = dedent(f'''This "{original_serial}" serial number is not original product.''')
             return 'FAILURE', answer
 
         query = "SELECT * FROM serials WHERE start_serial start_serial <= %s AND end_serial <= %s;"
         results = cur.execute(query, (serial, serial))
 
         if results > 1:
-            answer = f'''This "{original_serial}" is valid for more details please contact us.'''
+            answer = dedent(f'''This "{original_serial}" is valid for more details please contact us.''')
 
             return 'DOUBLE', answer
 
@@ -422,15 +438,26 @@ def check_serial(serial):
             description = ret[2]
             reference_number = ret[1]
             date = ret[5].date()
-            answer = f'''{original_serial}
+            answer = dedent(f'''{original_serial}
             {reference_number}
             {description}
             Hologram date: {date}
-            Genuine product '''
+            Genuine product ''')
             return 'OK', answer
 
-    answer = f'''This "{original_serial}" serial is not genuine.'''
+    answer = dedent(f'''This "{original_serial}" serial is not genuine.''')
     return 'NOT-FOUND', answer
+
+
+@app.route(f"/{configs.REMOTE_CALL_API_KEY}/check_one_serial/<serial>", methods=["GET"])
+def check_one_serial_api(serial):
+    """ to check whether a serial number is valid or not using api
+    caller should use something like /ABCDSECRET/cehck_one_serial/AA10000
+    answer back json which is status = DOUBLE, FAILURE, OK, NOT-FOUND
+    """
+    status, answer = check_serial(serial)
+    ret = {'status': status, 'answer': answer}
+    return jsonify(ret), 200
 
 
 @app.route("/database_check")
