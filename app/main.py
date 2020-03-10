@@ -332,15 +332,13 @@ def process():
     status, answer = check_serial(message)
 
     db = get_database_connection()
-    cur = db.cursor()
-    now = time.strftime('%Y-%m-%d %H:%M:%S')
-    cur.execute("INSERT INTO PROCESSED_SMS (status, sender, message, answer, date) VALUES (%s, %s, %s, %s, %s)",
-                (status, sender, message, answer, now))
+    log_new_sms(status, sender, message, answer)
     db.commit()
     db.close()
 
     send_sms(sender, answer)
-    return jsonify(data), 200
+    ret = {'message': 'processed'}
+    return jsonify(ret), 200
 
 
 @app.route('/check_one_serial', methods=['POST'])
@@ -409,6 +407,16 @@ def check_one_serial_api(serial):
     status, answer = check_serial(serial)
     ret = {'status': status, 'answer': answer}
     return jsonify(ret), 200
+
+
+def log_new_sms(status, sender, message, answer):
+    if len(message) > 40:
+        return
+    now = time.strftime('%Y-%m-%d %H:%M:%S')
+    db = get_database_connection()
+    cur = db.cursor()
+    cur.execute("INSERT INTO PROCESSED_SMS (status, sender, message, answer, date) VALUES (%s, %s, %s, %s, %s)",
+                (status, sender, message, answer, now))
 
 
 if __name__ == '__main__':
