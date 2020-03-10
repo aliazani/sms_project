@@ -12,6 +12,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from textwrap import dedent
 import configs
+import import_db
 
 app = Flask(__name__)
 
@@ -25,6 +26,12 @@ upload_folder = configs.UPLOAD_FOLDER
 allowed_extension = configs.ALLOWED_EXTENSION
 app.config['UPLOAD_FOLDER'] = upload_folder
 
+# Flask Login
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+login_manager.login_message_category = 'danger'
+
 
 def allowed_file(filename):
     """ checks the extension of the passed filename to be in the allowed extensions
@@ -37,12 +44,6 @@ def allowed_file(filename):
 # config
 app.config.update(SECRET_KEY=configs.SECRET_KEY)
 
-# Flask Login
-login_manager = LoginManager()
-login_manager.init_app(app)
-login_manager.login_view = 'login'
-login_manager.login_message_category = 'danger'
-
 
 class User(UserMixin):
     def __init__(self, id):
@@ -54,6 +55,58 @@ class User(UserMixin):
 
 # Create some user with id
 user = User(0)
+
+
+def get_database_connection():
+    """connects to the MySQL database and returns the connection"""
+    return pymysql.connect(host=configs.MYSQL_HOST,
+                           user=configs.MYSQL_USERNAME,
+                           password=configs.MYSQL_PASSWORD,
+                           db=configs.MYSQL_DB,
+                           charset='utf8')
+
+
+# Database status
+@app.route('/db_status/', methods=['GET'])
+@login_required
+def db_status():
+    """ show some status about the DB """
+    db = get_database_connection()
+    cur = db.cursor()
+    # collect some stats for the GUI
+    try:
+        cur.execute("SELECT count(*) FROM serials;")
+        num_serials = cur.fetchone()[0]
+    except Exception as e:
+        num_serials = f'Can not query serials count => {e}'
+
+    try:
+        cur.execute("SELECT count(*) FROM invalids;")
+        num_invalids = cur.fetchone()[0]
+    except Exception as e:
+        num_invalids = f'Can not query invalid count => {e}'
+
+    try:
+        cur.execute("SELECT log_value FROM logs WHERE log_name = 'import'")
+        log_import = cur.fetchone()[0]
+    except Exception as e:
+        log_import = f'Can not read import log results... yet => {e}'
+
+    try:
+        cur.execute("SELECT log_value FROM logs WHERE log_name = 'db_filename'")
+        log_filename = cur.fetchone()[0]
+    except Exception as e:
+        log_filename = f'can not read db filename from database => {e}'
+
+    try:
+        cur.execute("SELECT log_value FROM logs WHERE log_name = 'db_check'")
+        log_db_check = cur.fetchone()[0]
+    except Exception as e:
+        log_db_check = f'Can not read db_check logs... yet => {e}'
+
+    return render_template('db_status.html', data={'serials': num_serials, 'invalids': num_invalids,
+                                                   'log_import': log_import, 'log_db_check': log_db_check,
+                                                   'log_filename': log_filename})
 
 
 # some protected url
@@ -200,112 +253,6 @@ def get_database_connection():
                            charset='utf8')
 
 
-def import_database_from_excel(file_path):
-    """
-    Get an excel file name and import lookup data (data and failure) from it.
-    The first(0) sheet contains serials data like:
-     Row    Reference Number    Description Start serial    End serial  Date
-    And the 2nd(1) contains a column of invalid serials.
-    This data will be written into the Mysql_server database at Fandogh(Platform as service)
-    in two tables "serials" , "invalids".
-
-    :return: Two integers (number of serial rows, number of invalid rows)
-    """
-    # Create Database and connect to it.
-    db = get_database_connection()
-    cur = db.cursor()
-    total_flashes = 0
-    try:
-        # valid serials
-        # Create serials table
-        cur.execute('DROP TABLE IF EXISTS serials;')
-
-        cur.execute('''
-        CREATE TABLE serials (
-        id INTEGER PRIMARY KEY,
-        reference VARCHAR(200) ,
-        description  VARCHAR(200) ,
-        start_serial  CHAR(30) ,
-        end_serial  CHAR(30),
-        date DATETIME, INDEX(start_serial, end_serial));''')
-        db.commit()
-    except Exception as error:
-        flash(f'Error dropping and creating SERIALS table; {error}', 'danger')
-
-    # Insert Data into serials table
-    serials_counter = 1
-    line_number = 1
-    data_frame = read_excel(file_path, 0)
-    for _, (row, reference_number, description, start_serial, end_serial, date) in data_frame.iterrows():
-        line_number += 1
-        try:
-            start_serial = normalize_string(start_serial)
-            end_serial = normalize_string(end_serial)
-            query = 'INSERT INTO serials VALUES (%s, %s, %s, %s, %s, %s);'
-            cur.execute(query, (row, reference_number, description, start_serial, end_serial, date))
-            serials_counter += 1
-
-        except Exception as error:
-            total_flashes += 1
-            if total_flashes < MAX_FLASH:
-                flash(
-                    f'Error inserting line {line_number} from serials sheet SERIALS, {error}',
-                    'danger')
-            elif total_flashes == MAX_FLASH:
-                flash(f'Too many errors!', 'danger')
-
-        if line_number % 1000 == 0:
-            try:
-                db.commit()
-            except Exception as error:
-                flash(f'problem committing serials into db around {line_number} (or previous 20 ones); {error}')
-
-    db.commit()
-
-    # now lets save the invalid serials.
-    # remove the invalid table if exists, then create the new one
-
-    try:
-        cur.execute('DROP TABLE IF EXISTS invalids;')
-        cur.execute('''
-        CREATE TABLE invalids (
-            invalid_serial CHAR(30), INDEX(invalid_serial));''')
-        db.commit()
-    except Exception as e:
-        flash(f'Error dropping and creating INVALIDS table; {e}', 'danger')
-
-    invalid_counter = 1
-    line_number = 1
-    data_frame = read_excel(file_path, 1)  # This contains fail serial numbers.
-    # Insert Data into invalids table
-    for _, (failed_serial,) in data_frame.iterrows():
-        line_number += 1
-        try:
-            failed_serial = normalize_string(failed_serial)
-            query = 'INSERT INTO invalids VALUES (%s);'
-            cur.execute(query, (failed_serial,))
-            invalid_counter += 1
-
-        except Exception as e:
-            total_flashes += 1
-            if total_flashes < MAX_FLASH:
-                flash(
-                    f'Error inserting line {line_number} from serials sheet INVALIDS, {e}',
-                    'danger')
-            elif total_flashes == MAX_FLASH:
-                flash(f'Too many errors!', 'danger')
-
-        if line_number % 1000 == 0:
-            try:
-                db.commit()
-            except Exception as e:
-                flash(f'problem committing invalid serials into db around {line_number} (or previous 20 ones); {e}')
-
-    db.commit()
-    db.close()
-    return serials_counter, invalid_counter
-
-
 def send_sms(receptor, message):
     """
     This function will get a MSISDN and a message then uses KaveNegar to send sms.
@@ -398,7 +345,10 @@ def process():
 @app.route('/check_one_serial', methods=['POST'])
 @login_required
 def check_one_serial():
-    """ to check whether a serial number is valid or not"""
+    """ to check whether a serial number is valid or not using api
+    caller should use something like /ABCD-SECRET/check_one_serial/AA10000
+    answer back json which is status = DOUBLE, FAILURE, OK, NOT-FOUND
+    """
     serial_to_check = request.form["serial"]
     status, answer = check_serial(serial_to_check)
     flash(f'{status} - {answer}', 'info')
@@ -458,73 +408,6 @@ def check_one_serial_api(serial):
     status, answer = check_serial(serial)
     ret = {'status': status, 'answer': answer}
     return jsonify(ret), 200
-
-
-@app.route("/database_check")
-@login_required
-def db_check():
-    """ will do some sanity checks on the db and will flash the errors """
-
-    def collision(start_1, end_1, start_2, end_2):
-        if start_2 <= start_1 <= end_2:
-            return True
-        if start_2 <= end_1 <= end_2:
-            return True
-        if start_1 <= start_2 <= end_1:
-            return True
-        if start_1 <= end_2 <= end_1:
-            return True
-        return False
-
-    def separate(input_string):
-        """ gets AA0000000000000000000000000090 and returns AA, 90 """
-        digit_part = ''
-        alpha_part = ''
-        for character in input_string:
-            if character.isalpha():
-                alpha_part += character
-            elif character.isdigit():
-                digit_part += character
-        return alpha_part, int(digit_part)
-
-    db = get_database_connection()
-    cur = db.cursor()
-
-    cur.execute("SELECT id, start_serial, end_serial FROM serials")
-
-    raw_data = cur.fetchall()
-
-    data = {}
-    flashed = 0
-    for row in raw_data:
-        id_row, start_serial, end_serial = row
-        start_serial_alpha, start_serial_digit = separate(start_serial)
-        end_serial_alpha, end_serial_digit = separate(end_serial)
-        if start_serial_alpha != end_serial_alpha:
-            flashed += 1
-            if flashed < MAX_FLASH:
-                flash(f'start serial and end serial of row {id_row} start with different letters', 'danger')
-            elif flashed == MAX_FLASH:
-                flash('too many starts with different letters', 'danger')
-        else:
-            if start_serial_alpha not in data:
-                data[start_serial_alpha] = []
-            data[start_serial_alpha].append((id_row, start_serial_digit, end_serial_digit))
-
-    flashed = 0
-    for letters in data:
-        for i in range(len(data[letters])):
-            for j in range(i + 1, len(data[letters])):
-                id_row_1, start_serial_1, end_serial_1 = data[letters][i]
-                id_row_2, start_serial_2, end_serial_2 = data[letters][j]
-                if collision(start_serial_1, end_serial_1, start_serial_2, end_serial_2):
-                    flashed += 1
-                    if flashed < MAX_FLASH:
-                        flash(f'there is a collision between row ids {id_row_1} and {id_row_2}', 'danger')
-                    elif flashed == MAX_FLASH:
-                        flash(f'Too many collisions', 'danger')
-
-    return redirect('/')
 
 
 if __name__ == '__main__':
