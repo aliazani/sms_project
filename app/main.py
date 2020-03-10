@@ -4,6 +4,7 @@ import re
 import os
 import time
 import pymysql
+import subprocess
 from flask import Flask, jsonify, flash, request, Response, redirect, url_for, session, render_template, abort
 from flask_login import LoginManager, UserMixin, login_required, login_user, logout_user, current_user
 from werkzeug.utils import secure_filename
@@ -128,11 +129,11 @@ def home():
             return redirect(request.url)
         if file and allowed_file(file.filename):
             filename = secure_filename(file.filename)
+            filename.replace(' ', '_')  # no space in file names! because we will call them as command line arguments
             file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             file.save(file_path)
-            rows, failures = import_database_from_excel(file_path)
-            flash(f'Imported {rows} rows of serials and {failures} rows of failure', 'success')
-            os.remove(file_path)
+            subprocess.Popen(["python", "import_db.py", file_path])
+            flash('File uploaded. will be imported soon. follow from DB status Page', 'info')
             return redirect('/')
 
     db = get_database_connection()

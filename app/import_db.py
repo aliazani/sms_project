@@ -113,7 +113,7 @@ def import_database_from_excel(file_path):
         db.commit()
     except Exception as error:
         print("problem dropping serials")
-        output.append(f'Problem dropping and creating new table serials in database; {error}')
+        output.append(f'Problem dropping and creating new table for serials in database; {error}')
 
     cur.execute("INSERT INTO logs VALUES ('db_filename', %s)", (file_path,))
     db.commit()
