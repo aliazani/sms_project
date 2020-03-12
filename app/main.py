@@ -332,7 +332,7 @@ def process():
     status, answer = check_serial(message)
 
     db = get_database_connection()
-    log_new_sms(status, sender, message, answer)
+    log_new_sms(status, sender, message, answer, db)
     db.commit()
     db.close()
 
@@ -409,11 +409,10 @@ def check_one_serial_api(serial):
     return jsonify(ret), 200
 
 
-def log_new_sms(status, sender, message, answer):
+def log_new_sms(status, sender, message, answer, db):
     if len(message) > 40:
         return
     now = time.strftime('%Y-%m-%d %H:%M:%S')
-    db = get_database_connection()
     cur = db.cursor()
     cur.execute("INSERT INTO PROCESSED_SMS (status, sender, message, answer, date) VALUES (%s, %s, %s, %s, %s)",
                 (status, sender, message, answer, now))
